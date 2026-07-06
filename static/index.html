@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhishGuard - 钓鱼邮件检测智能体</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        ink: { 900: '#0b1020', 800: '#111833', 700: '#1a2347' },
+                        accent: {
+                            300: '#a78bfa', 400: '#8b5cf6', 500: '#7c3aed',
+                            600: '#6366f1', 700: '#2563eb'
+                        },
+                        safe: '#22c55e',
+                        warn: '#f59e0b',
+                        danger: '#ef4444',
+                    },
+                    backgroundImage: {
+                        'brand': 'linear-gradient(135deg, #7c3aed 0%, #2563eb 100%)',
+                        'brand-soft': 'linear-gradient(135deg, rgba(124,58,237,0.18) 0%, rgba(37,99,235,0.18) 100%)',
+                        'glow': 'radial-gradient(600px circle at 50% -10%, rgba(124,58,237,0.25), transparent 60%)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+        body { font-family: 'Inter', system-ui, sans-serif; }
+        /* 大背景辉光 */
+        .page-bg::before {
+            content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+            background: radial-gradient(900px circle at 15% -10%, rgba(124,58,237,0.22), transparent 55%),
+                        radial-gradient(900px circle at 85% -5%, rgba(37,99,235,0.20), transparent 55%);
+        }
+        .drop-zone { transition: all 0.3s ease; }
+        .drop-zone.dragover { border-color: #a78bfa; background: rgba(167,139,250,0.08); transform: translateY(-2px); }
+        .score-ring { transition: stroke-dashoffset 1.5s ease-in-out; filter: drop-shadow(0 0 8px rgba(124,58,237,0.6)); }
+        .fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+        @keyframes loadpulse { 0% { width:0%; opacity:1; } 50% { width:70%; opacity:.8; } 100% { width:95%; opacity:.5; } }
+        /* 毛玻璃卡片 */
+        .glass {
+            background: rgba(26, 35, 71, 0.55);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(148, 163, 220, 0.14);
+            border-radius: 16px;
+            box-shadow: 0 10px 30px -12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+        .glass-header { border-bottom: 1px solid rgba(148, 163, 220, 0.12); padding: 16px 20px; }
+        .glass-body { padding: 20px; }
+        .badge { display: inline-flex; align-items: center; padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600; }
+        .badge-safe { background: rgba(34,197,94,0.16); color: #4ade80; box-shadow: 0 0 12px rgba(34,197,94,0.25); }
+        .badge-warn { background: rgba(245,158,11,0.16); color: #fbbf24; box-shadow: 0 0 12px rgba(245,158,11,0.25); }
+        .badge-danger { background: rgba(239,68,68,0.16); color: #f87171; box-shadow: 0 0 12px rgba(239,68,68,0.25); }
+        .finding-item { padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid rgba(148,163,220,0.08); border-radius: 10px; margin-bottom: 8px; font-size: 13px; color: #bcc6e8; }
+        .progress-step { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+        .progress-step .dot { width: 10px; height: 10px; border-radius: 50%; background: #475569; transition: all .3s; }
+        .progress-step.active .dot { background: #a78bfa; box-shadow: 0 0 12px #a78bfa; }
+        .progress-step.done .dot { background: #4ade80; box-shadow: 0 0 8px rgba(74,222,128,0.7); }
+        .url-item { padding: 14px; border: 1px solid rgba(148,163,220,0.1); border-radius: 12px; margin-bottom: 10px; background: rgba(255,255,255,0.03); }
+        .score-bar { height: 7px; border-radius: 4px; background: rgba(148,163,220,0.15); overflow: hidden; }
+        .score-bar-fill { height: 100%; border-radius: 4px; transition: width 1s ease; }
+        .btn-brand { background-image: linear-gradient(135deg,#7c3aed,#2563eb); background-size: 200% 100%; transition: background-position .4s, transform .15s, box-shadow .3s; box-shadow: 0 8px 22px -8px rgba(124,58,237,0.6); }
+        .btn-brand:hover { background-position: 100% 0; box-shadow: 0 10px 28px -8px rgba(124,58,237,0.8); }
+        .btn-brand:active { transform: translateY(1px); }
+        .btn-ghost { background: rgba(148,163,220,0.08); border: 1px solid rgba(148,163,220,0.18); transition: background .2s; }
+        .btn-ghost:hover { background: rgba(148,163,220,0.16); }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .neon-purple { box-shadow: 0 0 10px #a78bfa; }
+        .neon-green { box-shadow: 0 0 10px #4ade80; }
+        .neon-amber { box-shadow: 0 0 10px #fbbf24; }
+    </style>
+</head>
+<body class="bg-ink-900 text-gray-100 min-h-screen page-bg">
+    <!-- Header -->
+    <header class="sticky top-0 z-50 border-b border-purple-500/20" style="background: linear-gradient(135deg, rgba(124,58,237,0.92) 0%, rgba(37,99,235,0.92) 100%); backdrop-filter: blur(12px);">
+        <div class="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-xl flex items-center justify-center" style="background: rgba(255,255,255,0.16); box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);">
+                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold text-white tracking-tight">PhishGuard</h1>
+                    <p class="text-[11px] text-white/70 -mt-0.5">钓鱼邮件检测智能体</p>
+                </div>
+            </div>
+            <div id="status-bar" class="flex items-center gap-4 text-xs">
+                <span id="llm-status" class="flex items-center gap-2 text-white/80">
+                    <span class="status-dot bg-white/40"></span>检测中...
+                </span>
+                <span id="vt-status" class="flex items-center gap-2"></span>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-6 py-8">
+        <!-- Upload Section -->
+        <section id="upload-section" class="mb-8">
+            <div id="drop-zone" class="drop-zone glass cursor-pointer hover:border-accent-300/50 transition-all">
+                <div class="glass-body text-center py-12">
+                    <div class="w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center bg-brand-soft" style="box-shadow: 0 0 40px rgba(124,58,237,0.25);">
+                        <svg class="w-8 h-8 text-accent-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-lg font-semibold text-white mb-2">拖拽邮件文件到此处</h3>
+                    <p class="text-sm text-gray-400 mb-4">或点击选择文件上传（支持多选）</p>
+                    <p class="text-xs text-gray-500">支持 .msg / .eml 格式，最大 50MB；也可直接 Ctrl+V 粘贴</p>
+                    <input type="file" id="file-input" accept=".msg,.eml" multiple class="hidden">
+                </div>
+            </div>
+
+            <!-- 文件预览列表 -->
+            <div id="file-preview-list" class="mt-4 space-y-2 hidden"></div>
+
+            <!-- 开始分析按钮 -->
+            <div class="text-center mt-4 hidden" id="analyze-btn-container">
+                <button id="start-analyze-btn" onclick="startBatchAnalyze()"
+                    class="btn-brand px-8 py-3 text-white rounded-xl font-semibold text-sm">
+                    开始分析 <span id="pending-count"></span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Progress Section -->
+        <section id="progress-section" class="hidden mb-8 fade-in">
+            <div class="glass">
+                <div class="glass-header">
+                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                        <svg class="w-4 h-4 text-accent-300 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                        <span id="step-phase-label">正在分析…</span>
+                        <span id="step-elapsed" class="ml-auto text-xs text-gray-400 font-mono">0s</span>
+                    </h3>
+                </div>
+                <div class="glass-body">
+                    <p class="text-sm text-gray-400">
+                        分析包含链接信誉查询（VirusTotal），根据网络情况可能需要
+                        <span class="text-yellow-300 font-medium">15~60 秒</span>，请耐心等待…
+                    </p>
+                    <div class="mt-4 flex items-center gap-3">
+                        <div class="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                            <div id="loading-bar" class="h-full bg-gradient-to-r from-purple-500 to-blue-500 rounded-full transition-all duration-1000" style="width:0%;animation:loadpulse 2s ease-in-out infinite;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Result Section -->
+        <section id="result-section" class="hidden fade-in">
+            <!-- Score Overview (始终展示) -->
+            <div class="glass mb-6">
+                <div class="glass-body flex flex-col md:flex-row items-center gap-8">
+                    <div class="relative">
+                        <svg class="w-40 h-40" viewBox="0 0 120 120">
+                            <defs>
+                                <linearGradient id="ring-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" stop-color="#a78bfa"/>
+                                    <stop offset="100%" stop-color="#2563eb"/>
+                                </linearGradient>
+                            </defs>
+                            <circle cx="60" cy="60" r="52" fill="none" stroke="rgba(148,163,220,0.15)" stroke-width="10"/>
+                            <circle id="score-ring" class="score-ring" cx="60" cy="60" r="52" fill="none"
+                                stroke="#22c55e" stroke-width="10" stroke-linecap="round"
+                                stroke-dasharray="326.73" stroke-dashoffset="326.73"
+                                transform="rotate(-90 60 60)"/>
+                        </svg>
+                        <div class="absolute inset-0 flex flex-col items-center justify-center">
+                            <span id="score-value" class="text-5xl font-extrabold text-white">0</span>
+                            <span id="score-label" class="text-xs text-gray-400 mt-1">安全</span>
+                        </div>
+                    </div>
+                    <div class="flex-1 text-center md:text-left">
+                        <h2 id="risk-title" class="text-2xl font-bold text-white mb-2">安全</h2>
+                        <p id="recommendation" class="text-sm text-gray-300 mb-3"></p>
+                        <!-- 得分构成条 -->
+                        <div id="score-breakdown" class="mb-4 hidden">
+                            <div class="text-xs text-gray-500 mb-1">得分构成</div>
+                            <div id="breakdown-bars" class="space-y-1"></div>
+                        </div>
+                        <div class="flex flex-wrap gap-2 justify-center md:justify-start">
+                            <span id="badge-urls" class="badge badge-safe">链接: 0分</span>
+                            <span id="badge-attach" class="badge badge-safe">附件: 0分</span>
+                            <span id="badge-content" class="badge badge-safe">内容: 0分</span>
+                            <span id="badge-sender" class="badge badge-safe">发件人: 0分</span>
+                        </div>
+                        <div id="elapsed-info" class="text-xs text-gray-500 mt-3"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 报告操作区（始终展示） -->
+            <div class="text-center flex flex-wrap justify-center gap-3 mb-6">
+                <button id="download-report-btn" onclick="downloadReport()" class="hidden btn-brand px-6 py-2.5 text-white rounded-xl text-sm font-semibold">
+                    下载检测报告
+                </button>
+                <button id="view-report-btn" onclick="viewReport()" class="hidden btn-ghost px-6 py-2.5 text-gray-100 rounded-xl text-sm font-medium">
+                    在浏览器中查看
+                </button>
+                <button id="preview-report-btn" onclick="previewReport()" class="hidden btn-ghost px-6 py-2.5 text-gray-100 rounded-xl text-sm font-medium">
+                    内嵌预览报告
+                </button>
+                <button onclick="resetUI()" class="btn-ghost px-6 py-2.5 text-gray-100 rounded-xl text-sm font-medium">
+                    检测下一封邮件
+                </button>
+            </div>
+
+            <!-- 报告内嵌预览区 -->
+            <div id="report-preview-section" class="hidden mb-6">
+                <div class="glass">
+                    <div class="glass-header flex items-center justify-between">
+                        <h3 class="text-sm font-semibold text-white">报告预览</h3>
+                        <button onclick="closeReportPreview()" class="text-xs text-gray-400 hover:text-white">关闭预览 ✕</button>
+                    </div>
+                    <div class="glass-body">
+                        <iframe id="report-iframe" class="w-full border border-gray-700 rounded-xl" style="min-height:600px;background:#fff;"></iframe>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 分层折叠区 -->
+            <!-- ① 维度详情 -->
+            <details class="glass mb-4 group" id="details-dimensions">
+                <summary class="glass-header cursor-pointer list-none flex items-center justify-between select-none">
+                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                        <span class="text-gray-400 group-open:hidden">▸</span>
+                        <span class="text-gray-400 hidden group-open:block">▾</span>
+                        维度详情
+                    </h3>
+                    <span class="text-xs text-gray-500">点击展开/收起</span>
+                </summary>
+                <div class="glass-body">
+                    <!-- Dimension Details Grid -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
+                        <!-- URL Analysis -->
+                        <div class="glass">
+                            <div class="glass-header flex items-center justify-between">
+                                <h3 class="text-sm font-semibold text-white">链接分析</h3>
+                                <span id="url-score-badge" class="badge badge-safe">0分</span>
+                            </div>
+                            <div class="glass-body">
+                                <div id="url-findings" class="space-y-2"></div>
+                                <div id="url-list" class="mt-4 space-y-2"></div>
+                            </div>
+                        </div>
+                        <!-- Attachment Analysis -->
+                        <div class="glass">
+                            <div class="glass-header flex items-center justify-between">
+                                <h3 class="text-sm font-semibold text-white">附件检测</h3>
+                                <span id="attach-score-badge" class="badge badge-safe">0分</span>
+                            </div>
+                            <div class="glass-body">
+                                <div id="attach-findings" class="space-y-2"></div>
+                                <div id="attach-list" class="mt-4 space-y-2"></div>
+                            </div>
+                        </div>
+                        <!-- Content Analysis -->
+                        <div class="glass">
+                            <div class="glass-header flex items-center justify-between">
+                                <h3 class="text-sm font-semibold text-white">内容分析</h3>
+                                <span id="content-score-badge" class="badge badge-safe">0分</span>
+                            </div>
+                            <div class="glass-body">
+                                <div id="content-summary" class="text-sm text-gray-300 mb-3"></div>
+                                <div id="content-indicators" class="space-y-2"></div>
+                                <div class="mt-4 grid grid-cols-2 gap-3">
+                                    <div><div class="text-xs text-gray-400 mb-1">社会工程学</div><div class="score-bar"><div id="bar-se" class="score-bar-fill bg-safe" style="width:0%"></div></div></div>
+                                    <div><div class="text-xs text-gray-400 mb-1">冒充风险</div><div class="score-bar"><div id="bar-imp" class="score-bar-fill bg-safe" style="width:0%"></div></div></div>
+                                    <div><div class="text-xs text-gray-400 mb-1">凭证窃取</div><div class="score-bar"><div id="bar-cred" class="score-bar-fill bg-safe" style="width:0%"></div></div></div>
+                                    <div><div class="text-xs text-gray-400 mb-1">欺骗意图</div><div class="score-bar"><div id="bar-decep" class="score-bar-fill bg-safe" style="width:0%"></div></div></div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Sender Analysis -->
+                        <div class="glass">
+                            <div class="glass-header flex items-center justify-between">
+                                <h3 class="text-sm font-semibold text-white">发件人分析</h3>
+                                <span id="sender-score-badge" class="badge badge-safe">0分</span>
+                            </div>
+                            <div class="glass-body">
+                                <div id="sender-findings" class="space-y-2"></div>
+                                <div id="auth-results" class="mt-4 grid grid-cols-3 gap-2 text-center">
+                                    <div class="p-2 rounded-xl bg-black/20"><div class="text-xs text-gray-400">SPF</div><div id="spf-result" class="text-sm mt-1">-</div></div>
+                                    <div class="p-2 rounded-xl bg-black/20"><div class="text-xs text-gray-400">DKIM</div><div id="dkim-result" class="text-sm mt-1">-</div></div>
+                                    <div class="p-2 rounded-xl bg-black/20"><div class="text-xs text-gray-400">DMARC</div><div id="dmarc-result" class="text-sm mt-1">-</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Correlation Bonus -->
+                    <div id="correlation-section" class="hidden">
+                        <div class="glass" style="border-color: rgba(124,58,237,0.35);">
+                            <div class="glass-body flex items-center gap-3">
+                                <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+                                </svg>
+                                <div>
+                                    <span class="text-sm text-purple-300 font-medium">跨维度关联加分: +<span id="correlation-bonus">0</span></span>
+                                    <p class="text-xs text-gray-500 mt-1">多个维度同时命中高危指标，钓鱼概率显著提升</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- HTML Structure Analysis -->
+                    <div id="html-analysis-section" class="hidden mt-4">
+                        <div class="glass">
+                            <div class="glass-header"><h3 class="text-sm font-semibold text-white">HTML 结构分析</h3></div>
+                            <div class="glass-body"><div id="html-findings" class="space-y-2"></div></div>
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <!-- ② 邮件信息 -->
+            <details class="glass mb-4 group" id="details-meta">
+                <summary class="glass-header cursor-pointer list-none flex items-center justify-between select-none">
+                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                        <span class="text-gray-400 group-open:hidden">▸</span>
+                        <span class="text-gray-400 hidden group-open:block">▾</span>
+                        邮件信息
+                    </h3>
+                    <span class="text-xs text-gray-500">点击展开/收起</span>
+                </summary>
+                <div class="glass-body">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                        <div><span class="text-gray-400">发件人</span><p id="meta-sender" class="text-white mt-1"></p></div>
+                        <div><span class="text-gray-400">收件人</span><p id="meta-to" class="text-white mt-1"></p></div>
+                        <div><span class="text-gray-400">主题</span><p id="meta-subject" class="text-white mt-1"></p></div>
+                        <div><span class="text-gray-400">日期</span><p id="meta-date" class="text-white mt-1"></p></div>
+                        <div><span class="text-gray-400">抄送</span><p id="meta-cc" class="text-white mt-1"></p></div>
+                        <div><span class="text-gray-400">附件/链接数</span><p id="meta-counts" class="text-white mt-1"></p></div>
+                        <div class="md:col-span-2"><span class="text-gray-400">Message-ID</span><p id="meta-msgid" class="text-white mt-1 font-mono text-xs break-all"></p></div>
+                    </div>
+                </div>
+            </details>
+
+            <!-- ③ 技术细节（低对比度提示） -->
+            <details class="glass mb-4 group" id="details-tech">
+                <summary class="glass-header cursor-pointer list-none flex items-center justify-between select-none">
+                    <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+                        <span class="text-gray-400 group-open:hidden">▸</span>
+                        <span class="text-gray-400 hidden group-open:block">▾</span>
+                        技术细节（给工程师）
+                    </h3>
+                    <span class="text-xs text-gray-500">点击展开/收起</span>
+                </summary>
+                <div class="glass-body text-xs text-gray-500">
+                    <p class="mb-2">完整技术数据见下载的 HTML 检测报告第③层，包含各维度加权前后分值、邮件认证原始结果、URL/附件完整明细。</p>
+                </div>
+            </details>
+        </section>
+
+        <!-- Error Section -->
+        <section id="error-section" class="hidden fade-in">
+            <div class="glass" style="border-color: rgba(239,68,68,0.4);">
+                <div class="glass-body text-center py-8">
+                    <svg class="w-12 h-12 mx-auto mb-3 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                    </svg>
+                    <h3 class="text-lg font-semibold text-white mb-2">分析失败</h3>
+                    <p id="error-message" class="text-sm text-gray-300"></p>
+                    <button onclick="resetUI()" class="mt-4 btn-ghost px-4 py-2 text-gray-100 rounded-xl text-sm">重试</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        // ============================================================
+        // DOM Elements
+        // ============================================================
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+        const uploadSection = document.getElementById('upload-section');
+        const progressSection = document.getElementById('progress-section');
+        const resultSection = document.getElementById('result-section');
+        const errorSection = document.getElementById('error-section');
+        let lastFile = null; // 存储最近上传的文件，用于报告导出
+
+        // ============================================================
+        // File Upload
+        // ============================================================
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = Array.from(e.dataTransfer.files).filter(f =>
+                f.name.toLowerCase().endsWith('.msg') || f.name.toLowerCase().endsWith('.eml')
+            );
+            if (files.length > 0) renderFilePreview(files);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                renderFilePreview(Array.from(e.target.files));
+            }
+        });
+
+        // ── 粘贴上传（Ctrl+V / Cmd+V）──
+        document.addEventListener('paste', (e) => {
+            const items = Array.from(e.clipboardData.items);
+            const emailFiles = items
+                .filter(item => item.kind === 'file')
+                .map(item => item.getAsFile())
+                .filter(f => f && (f.name.toLowerCase().endsWith('.msg') || f.name.toLowerCase().endsWith('.eml')));
+            if (emailFiles.length > 0) renderFilePreview(emailFiles);
+        });
+
+        // ── 文件预览 + 批量队列 ──
+        let pendingFiles = [];
+
+        function renderFilePreview(files) {
+            pendingFiles = files.slice(0, 20);
+            const container = document.getElementById('file-preview-list');
+            const btnContainer = document.getElementById('analyze-btn-container');
+            const countEl = document.getElementById('pending-count');
+            container.innerHTML = pendingFiles.map((f, i) => `
+                <div class="flex items-center gap-3 px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-sm">
+                    <span class="text-gray-400 w-6">${i + 1}.</span>
+                    <span class="text-white flex-1 truncate">${escHtml(f.name)}</span>
+                    <span class="text-gray-500">${(f.size / 1024).toFixed(0)} KB</span>
+                    <button onclick="removePendingFile(${i})" class="text-gray-500 hover:text-red-400 ml-2 flex-shrink-0">✕</button>
+                </div>`).join('');
+            container.classList.remove('hidden');
+            if (countEl) countEl.textContent = `（${pendingFiles.length} 个文件）`;
+            btnContainer.classList.remove('hidden');
+        }
+
+        function removePendingFile(index) {
+            pendingFiles.splice(index, 1);
+            if (pendingFiles.length === 0) {
+                document.getElementById('file-preview-list').classList.add('hidden');
+                document.getElementById('analyze-btn-container').classList.add('hidden');
+            } else {
+                renderFilePreview(pendingFiles);
+            }
+        }
+
+        // ── 批量分析 ──
+        let batchResults = [];
+        let batchIndex = 0;
+
+        async function startBatchAnalyze() {
+            if (!pendingFiles.length) return;
+            batchResults = [];
+            batchIndex = 0;
+            const btn = document.getElementById('start-analyze-btn');
+            btn.textContent = '分析中…';
+            btn.disabled = true;
+            lastFile = pendingFiles[0]; // 用于报告导出
+            showProgress();
+            await processNextInBatch();
+        }
+
+        async function processNextInBatch() {
+            if (batchIndex >= pendingFiles.length) {
+                if (batchResults.length > 0) {
+                    showResult(batchResults[0].data.result, batchResults[0].data.elapsed_seconds);
+                }
+                const btn = document.getElementById('start-analyze-btn');
+                if (btn) { btn.textContent = '开始分析'; btn.disabled = false; }
+                return;
+            }
+            const file = pendingFiles[batchIndex];
+            const phaseLabel = document.getElementById('step-phase-label');
+            if (phaseLabel) phaseLabel.textContent = `分析 ${batchIndex + 1}/${pendingFiles.length}: ${file.name}`;
+            const formData = new FormData();
+            formData.append('file', file);
+            try {
+                const resp = await fetch('/api/analyze', { method: 'POST', body: formData });
+                const data = await resp.json();
+                if (data.success) batchResults.push({ file, data });
+            } catch (err) {
+                console.error(`分析文件 ${file.name} 失败:`, err);
+            }
+            batchIndex++;
+            await processNextInBatch();
+        }
+
+        // ============================================================
+        // Analysis Flow
+        // ============================================================
+        async function handleFile(file) {
+            const ext = file.name.toLowerCase();
+            if (!ext.endsWith('.msg') && !ext.endsWith('.eml')) {
+                showError('请选择 .msg 或 .eml 格式的邮件文件');
+                return;
+            }
+            if (file.size > 50 * 1024 * 1024) {
+                showError('文件过大，最大支持 50MB');
+                return;
+            }
+
+            lastFile = file;
+            showProgress();
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const startTime = Date.now();
+            const elapsedEl = document.getElementById('step-elapsed');
+            let tickTimer = null;
+            tickTimer = setInterval(() => {
+                const sec = Math.round((Date.now() - startTime) / 1000);
+                if (elapsedEl) elapsedEl.textContent = `${sec}s`;
+                const phase = Math.floor(sec / 15);
+                const phaseMsgs = [
+                    '解析邮件结构…', '分析链接信誉…', '查询 VirusTotal…（约 15~60 秒）',
+                    '检测附件安全…', '综合评分中…', '分析完成，正在渲染…'
+                ];
+                const phaseEl = document.getElementById('step-phase-label');
+                if (phaseEl) phaseEl.textContent = phaseMsgs[Math.min(phase, phaseMsgs.length - 1)];
+            }, 1000);
+
+            try {
+                const response = await fetch('/api/analyze', { method: 'POST', body: formData });
+                if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || '分析失败');
+                }
+                const data = await response.json();
+                if (!data.success) throw new Error('分析返回失败');
+                await new Promise(r => setTimeout(r, 300));
+                showResult(data.result, data.elapsed_seconds);
+            } catch (err) {
+                if (tickTimer) { clearInterval(tickTimer); tickTimer = null; }
+                showError(err.message);
+            }
+        }
+
+        // ============================================================
+        // UI State Management
+        // ============================================================
+        function showProgress() {
+            progressSection.classList.remove('hidden');
+            resultSection.classList.add('hidden');
+            errorSection.classList.add('hidden');
+        }
+
+        function showError(msg) {
+            progressSection.classList.add('hidden');
+            resultSection.classList.add('hidden');
+            errorSection.classList.remove('hidden');
+            document.getElementById('error-message').textContent = msg;
+        }
+
+        function resetUI() {
+            progressSection.classList.add('hidden');
+            resultSection.classList.add('hidden');
+            errorSection.classList.add('hidden');
+            fileInput.value = '';
+            lastFile = null;
+            const corrSection = document.getElementById('correlation-section');
+            const htmlSection = document.getElementById('html-analysis-section');
+            const dlBtn = document.getElementById('download-report-btn');
+            const viewBtn = document.getElementById('view-report-btn');
+            const previewBtn = document.getElementById('preview-report-btn');
+            const previewSection = document.getElementById('report-preview-section');
+            if (corrSection) corrSection.classList.add('hidden');
+            if (htmlSection) htmlSection.classList.add('hidden');
+            if (dlBtn) dlBtn.classList.add('hidden');
+            if (viewBtn) viewBtn.classList.add('hidden');
+            if (previewBtn) previewBtn.classList.add('hidden');
+            if (previewSection) previewSection.classList.add('hidden');
+        }
+
+        // ============================================================
+        // Report: Download (.html file) + View (new tab)
+        // ============================================================
+        async function fetchReportHtml() {
+            if (!lastFile) throw new Error('请先上传并分析邮件文件');
+            const formData = new FormData();
+            formData.append('file', lastFile);
+            const response = await fetch('/api/report', { method: 'POST', body: formData });
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.detail || '报告生成失败');
+            }
+            return await response.text();
+        }
+
+        function safeFilename(name) {
+            // 取主题或文件名做安全文件名，去掉扩展名
+            let base = (name || '检测报告').replace(/\.(msg|eml)$/i, '');
+            return base.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60) + '-检测报告.html';
+        }
+
+        async function downloadReport() {
+            const btn = document.getElementById('download-report-btn');
+            const original = btn.textContent;
+            btn.textContent = '生成报告中...';
+            btn.disabled = true;
+            try {
+                const htmlContent = await fetchReportHtml();
+                const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = safeFilename(lastFile.name);
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 30000);
+            } catch (err) {
+                alert('报告下载失败: ' + err.message);
+            } finally {
+                btn.textContent = original;
+                btn.disabled = false;
+            }
+        }
+
+        async function viewReport() {
+            const btn = document.getElementById('view-report-btn');
+            const original = btn.textContent;
+            btn.textContent = '生成报告中...';
+            btn.disabled = true;
+            try {
+                if (!lastFile) throw new Error('请先上传并分析邮件文件');
+                const formData = new FormData();
+                formData.append('file', lastFile);
+                // 用 inline=1 让服务端以内联方式返回，避免被当成下载
+                const response = await fetch('/api/report?inline=1', { method: 'POST', body: formData });
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({}));
+                    throw new Error(err.detail || '报告生成失败');
+                }
+                const htmlContent = await response.text();
+                const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                window.open(url, '_blank');
+                setTimeout(() => URL.revokeObjectURL(url), 60000);
+            } catch (err) {
+                alert('报告打开失败: ' + err.message);
+            } finally {
+                btn.textContent = original;
+                btn.disabled = false;
+            }
+        }
+
+        async function previewReport() {
+            const previewSection = document.getElementById('report-preview-section');
+            const iframe = document.getElementById('report-iframe');
+            const btn = document.getElementById('preview-report-btn');
+            const original = btn.textContent;
+            btn.textContent = '生成预览...';
+            btn.disabled = true;
+            try {
+                const htmlContent = await fetchReportHtml();
+                iframe.srcdoc = htmlContent;
+                previewSection.classList.remove('hidden');
+                previewSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (err) {
+                alert('预览失败: ' + err.message);
+            } finally {
+                btn.textContent = original;
+                btn.disabled = false;
+            }
+        }
+
+        function closeReportPreview() {
+            const previewSection = document.getElementById('report-preview-section');
+            const iframe = document.getElementById('report-iframe');
+            if (previewSection) previewSection.classList.add('hidden');
+            if (iframe) iframe.srcdoc = '';
+        }
+
+        // ============================================================
+        // Result Rendering
+        // ============================================================
+        function showResult(result, elapsed) {
+            progressSection.classList.add('hidden');
+            errorSection.classList.add('hidden');
+            resultSection.classList.remove('hidden');
+
+            const score = result.total_score;
+            const level = result.risk_level;
+
+            const ring = document.getElementById('score-ring');
+            const circumference = 326.73;
+            const offset = circumference - (score / 100) * circumference;
+            ring.style.strokeDashoffset = offset;
+
+            let color = '#22c55e'; let label = '安全';
+            if (level === 'suspicious') { color = '#f59e0b'; label = '可疑'; }
+            else if (level === 'malicious') { color = '#ef4444'; label = '高危'; }
+
+            // 高危用红色环、否则用渐变环
+            if (level === 'malicious') {
+                ring.setAttribute('stroke', color);
+            } else if (level === 'suspicious') {
+                ring.setAttribute('stroke', color);
+            } else {
+                ring.setAttribute('stroke', 'url(#ring-grad)');
+            }
+
+            document.getElementById('score-value').textContent = score;
+            document.getElementById('score-value').style.color = color;
+            document.getElementById('score-label').textContent = label;
+            document.getElementById('risk-title').textContent = label;
+            document.getElementById('risk-title').style.color = color;
+            document.getElementById('recommendation').textContent = result.recommendation;
+
+            // Dimension badges
+            const dims = result.dimensions || [];
+            dims.forEach(d => {
+                const id = { '链接风险': 'badge-urls', '附件风险': 'badge-attach', '内容风险': 'badge-content', '发件人风险': 'badge-sender' }[d.name];
+                if (id) {
+                    const el = document.getElementById(id);
+                    el.textContent = `${d.name}: ${d.score}分`;
+                    el.className = 'badge ' + getBadgeClass(d.score);
+                }
+            });
+
+            document.getElementById('elapsed-info').textContent = `分析耗时 ${elapsed}s`;
+
+            const meta = result.email_metadata;
+            if (meta) {
+                document.getElementById('meta-sender').textContent = meta.sender_name ? `${meta.sender_name} <${meta.sender_email}>` : meta.sender_email;
+                document.getElementById('meta-to').textContent = (meta.to || []).join(', ');
+                document.getElementById('meta-cc').textContent = (meta.cc || []).join(', ') || '（无）';
+                document.getElementById('meta-subject').textContent = meta.subject || '(无主题)';
+                document.getElementById('meta-date').textContent = meta.date || '';
+                document.getElementById('meta-counts').textContent = `${meta.attachment_count || 0} 个附件，${meta.url_count || 0} 个链接`;
+                document.getElementById('meta-msgid').textContent = meta.message_id || '（无）';
+            }
+
+            renderURLAnalysis(result.url_analysis);
+            renderAttachmentAnalysis(result.attachment_analysis);
+            renderContentAnalysis(result.content_analysis);
+            renderSenderAnalysis(result.sender_analysis);
+
+            const corrSection = document.getElementById('correlation-section');
+            const corrBonus = document.getElementById('correlation-bonus');
+            if (result.correlation_bonus > 0) {
+                corrBonus.textContent = result.correlation_bonus;
+                corrSection.classList.remove('hidden');
+            } else {
+                corrSection.classList.add('hidden');
+            }
+
+            const htmlSection = document.getElementById('html-analysis-section');
+            const htmlFindings = document.getElementById('html-findings');
+            if (result.html_analysis && result.html_analysis.findings && result.html_analysis.findings.length > 0) {
+                htmlFindings.innerHTML = '';
+                result.html_analysis.findings.forEach(f => {
+                    htmlFindings.innerHTML += `<div class="finding-item text-yellow-300">${escHtml(f)}</div>`;
+                });
+                htmlSection.classList.remove('hidden');
+            } else {
+                htmlSection.classList.add('hidden');
+            }
+
+            document.getElementById('download-report-btn').classList.remove('hidden');
+            document.getElementById('view-report-btn').classList.remove('hidden');
+            document.getElementById('preview-report-btn').classList.remove('hidden');
+            // 关闭可能打开的预览
+            closeReportPreview();
+
+            // 得分构成瀑布
+            renderScoreBreakdown(result);
+        }
+
+        function renderScoreBreakdown(result) {
+            const container = document.getElementById('score-breakdown');
+            const barsEl = document.getElementById('breakdown-bars');
+            if (!result.score_breakdown || !result.total_score) {
+                container.classList.add('hidden');
+                return;
+            }
+            const bd = result.score_breakdown;
+            const total = result.total_score;
+            const items = [
+                { label: '🔗 链接', contrib: bd.url_contribution },
+                { label: '📎 附件', contrib: bd.attachment_contribution },
+                { label: '📝 内容', contrib: bd.content_contribution },
+                { label: '👤 发件人', contrib: bd.sender_contribution },
+            ].filter(i => i.contrib > 0);
+
+            if (items.length === 0 && result.correlation_bonus <= 0) {
+                container.classList.add('hidden');
+                return;
+            }
+
+            container.classList.remove('hidden');
+            barsEl.innerHTML = items.map(i => {
+                const pct = Math.min(i.contrib / total * 100, 100);
+                return `<div class="flex items-center gap-2 text-xs">
+                    <span class="w-14 shrink-0 text-gray-400">${i.label}</span>
+                    <div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+                        <div class="h-full rounded-full transition-all duration-700"
+                             style="width:${pct}%;background:linear-gradient(90deg,#7c3aed,#2563eb);"></div>
+                    </div>
+                    <span class="w-8 text-right text-purple-400 font-bold">+${i.contrib}</span>
+                </div>`;
+            }).join('');
+
+            if (result.correlation_bonus > 0) {
+                const pct = Math.min(result.correlation_bonus / total * 100, 100);
+                const detail = bd.correlation_bonus_detail || '关联加分';
+                barsEl.innerHTML += `<div class="flex items-center gap-2 text-xs mt-1">
+                    <span class="w-14 shrink-0 text-purple-400">⚡ 关联加分</span>
+                    <div class="flex-1 h-2 bg-gray-700 rounded-full overflow-hidden">
+                        <div class="h-full rounded-full transition-all duration-700"
+                             style="width:${pct}%;background:linear-gradient(90deg,#a855f7,#9333ea);"></div>
+                    </div>
+                    <span class="w-8 text-right text-purple-400 font-bold">+${result.correlation_bonus}</span>
+                </div>
+                <div class="text-xs text-gray-500 mt-0.5 ml-[4.5rem]">${detail}</div>`;
+            }
+        }
+
+
+        function renderURLAnalysis(data) {
+            if (!data) return;
+            const findingsEl = document.getElementById('url-findings');
+            const listEl = document.getElementById('url-list');
+            const badge = document.getElementById('url-score-badge');
+
+            badge.textContent = data.max_score + '分';
+            badge.className = 'badge ' + getBadgeClass(data.max_score);
+
+            findingsEl.innerHTML = '';
+            (data.findings || []).forEach(f => {
+                findingsEl.innerHTML += `<div class="finding-item">${escHtml(f)}</div>`;
+            });
+
+            listEl.innerHTML = '';
+            (data.urls_analyzed || []).forEach(u => {
+                let vtHtml = '';
+                if (u.vt_checked && u.vt_total_engines > 0) {
+                    const vtColor = u.vt_malicious_count > 0 ? 'text-red-400' : 'text-green-400';
+                    vtHtml = `<div class="text-xs ${vtColor} mt-1">VirusTotal: ${u.vt_malicious_count}/${u.vt_total_engines} 引擎报毒${u.vt_reputation !== null ? ' | 信誉: ' + u.vt_reputation : ''}</div>`;
+                }
+                let mismatchHtml = '';
+                if (u.href_mismatch) mismatchHtml = `<div class="text-xs text-red-400 mt-1">⚠ 显示文本与实际域名不一致</div>`;
+                let displayTextHtml = '';
+                if (u.display_text) displayTextHtml = `<div class="text-xs text-gray-400 mt-1">显示文本: ${escHtml(u.display_text)}</div>`;
+                listEl.innerHTML += `
+                    <div class="url-item">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs text-gray-300 truncate flex-1 mr-2" title="${escHtml(u.url)}">${escHtml(u.url)}</span>
+                            <span class="badge ${getBadgeClass(u.score)}">${u.score}分</span>
+                        </div>
+                        ${displayTextHtml}${mismatchHtml}
+                        ${u.domain_age_days !== null ? `<div class="text-xs text-gray-400">域名年龄: ${u.domain_age_days}天</div>` : ''}
+                        ${u.typosquat_brand ? `<div class="text-xs text-red-400">仿冒品牌: ${escHtml(u.typosquat_brand)}</div>` : ''}
+                        ${u.is_short_url ? `<div class="text-xs text-yellow-300">短链接</div>` : ''}
+                        ${u.suspicious_keywords.length ? `<div class="text-xs text-gray-400">关键词: ${u.suspicious_keywords.join(', ')}</div>` : ''}
+                        ${vtHtml}
+                    </div>`;
+            });
+        }
+
+        function renderAttachmentAnalysis(data) {
+            if (!data) return;
+            const findingsEl = document.getElementById('attach-findings');
+            const listEl = document.getElementById('attach-list');
+            const badge = document.getElementById('attach-score-badge');
+
+            badge.textContent = data.max_score + '分';
+            badge.className = 'badge ' + getBadgeClass(data.max_score);
+
+            findingsEl.innerHTML = '';
+            (data.findings || []).forEach(f => {
+                findingsEl.innerHTML += `<div class="finding-item">${escHtml(f)}</div>`;
+            });
+
+            listEl.innerHTML = '';
+            (data.attachments_analyzed || []).forEach(a => {
+                let vtHtml = '';
+                if (a.vt_checked && a.vt_total_engines > 0) {
+                    const vtColor = a.vt_malicious_count > 0 ? 'text-red-400' : 'text-green-400';
+                    const vtLink = a.vt_link ? `<a href="${escHtml(a.vt_link)}" target="_blank" class="underline hover:text-white">VT报告</a>` : '';
+                    vtHtml = `<div class="text-xs ${vtColor} mt-1">VirusTotal: ${a.vt_malicious_count}/${a.vt_total_engines} 引擎报毒 ${vtLink}</div>`;
+                }
+                listEl.innerHTML += `
+                    <div class="url-item">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm text-white">${escHtml(a.filename)}</span>
+                            <span class="badge ${getBadgeClass(a.score)}">${a.score}分</span>
+                        </div>
+                        <div class="text-xs text-gray-400">类型: ${escHtml(a.extension)} | 大小: ${formatSize(a.size)} | 危险等级: ${a.file_type_danger}</div>
+                        ${a.has_macro ? `<div class="text-xs text-red-400 mt-1">检测到 VBA 宏 ${a.macro_suspicious_keywords.length ? '(' + a.macro_suspicious_keywords.slice(0, 5).join(', ') + ')' : ''}</div>` : ''}
+                        ${a.is_disguised ? `<div class="text-xs text-red-400 mt-1">文件类型伪装: 预期 ${escHtml(a.expected_type)} 实际 ${escHtml(a.actual_type)}</div>` : ''}
+                        ${a.is_encrypted ? `<div class="text-xs text-red-400 mt-1">🔒 密码保护压缩包（可能隐藏恶意载荷）</div>` : ''}
+                        ${a.inner_files && a.inner_files.length > 0 ? `<div class="text-xs text-yellow-300 mt-1">内部文件: ${a.inner_files.slice(0, 5).map(f => escHtml(f)).join(', ')}${a.inner_files.length > 5 ? '...' : ''}</div>` : ''}
+                        ${a.sha256 ? `<div class="text-xs text-gray-500 mt-1 font-mono">SHA256: ${a.sha256.substring(0, 16)}...</div>` : ''}
+                        ${vtHtml}
+                    </div>`;
+            });
+        }
+
+        function renderContentAnalysis(data) {
+            if (!data) return;
+            const badge = document.getElementById('content-score-badge');
+            badge.textContent = data.score + '分';
+            badge.className = 'badge ' + getBadgeClass(data.score);
+
+            document.getElementById('content-summary').textContent = (data.summary || '') + (data.used_llm ? ' (LLM分析)' : ' (规则引擎)');
+
+            const indicatorsEl = document.getElementById('content-indicators');
+            indicatorsEl.innerHTML = '';
+            (data.suspicious_indicators || []).forEach(ind => {
+                indicatorsEl.innerHTML += `<div class="finding-item">${escHtml(ind)}</div>`;
+            });
+
+            updateBar('bar-se', data.social_engineering);
+            updateBar('bar-imp', data.impersonation);
+            updateBar('bar-cred', data.credential_harvesting);
+            updateBar('bar-decep', data.deception_intent);
+        }
+
+        function renderSenderAnalysis(data) {
+            if (!data) return;
+            const findingsEl = document.getElementById('sender-findings');
+            const badge = document.getElementById('sender-score-badge');
+
+            badge.textContent = data.score + '分';
+            badge.className = 'badge ' + getBadgeClass(data.score);
+
+            findingsEl.innerHTML = '';
+            if (data.findings.length === 0) {
+                findingsEl.innerHTML = '<div class="finding-item">未发现发件人异常</div>';
+            } else {
+                data.findings.forEach(f => {
+                    findingsEl.innerHTML += `<div class="finding-item">${escHtml(f)}</div>`;
+                });
+            }
+
+            const authResultsEl = document.getElementById('auth-results');
+            const spfEl = document.getElementById('spf-result');
+            const dkimEl = document.getElementById('dkim-result');
+            const dmarcEl = document.getElementById('dmarc-result');
+
+            if (data.spf_result || data.dkim_result || data.dmarc_result) {
+                authResultsEl.classList.remove('hidden');
+                spfEl.innerHTML = formatAuthResult(data.spf_result);
+                dkimEl.innerHTML = formatAuthResult(data.dkim_result);
+                dmarcEl.innerHTML = formatAuthResult(data.dmarc_result);
+            } else {
+                authResultsEl.classList.add('hidden');
+            }
+
+            if (data.reply_to_mismatch) findingsEl.innerHTML += '<div class="finding-item text-red-400">Reply-To 地址与发件人地址不一致</div>';
+            if (data.return_path_mismatch) findingsEl.innerHTML += '<div class="finding-item text-red-400">Return-Path 地址与发件人地址不一致</div>';
+        }
+
+        function formatAuthResult(result) {
+            if (!result || result === 'unknown' || result === 'none') {
+                return '<span class="text-gray-500">未配置</span>';
+            }
+            const passKeywords = ['pass', 'softpass'];
+            const isPass = passKeywords.some(k => result.toLowerCase().includes(k));
+            if (isPass) return '<span class="text-green-400">' + escHtml(result) + '</span>';
+            return '<span class="text-red-400">' + escHtml(result) + '</span>';
+        }
+
+        // ============================================================
+        // Helpers
+        // ============================================================
+        function getBadgeClass(score) {
+            if (score <= 30) return 'badge-safe';
+            if (score <= 60) return 'badge-warn';
+            return 'badge-danger';
+        }
+
+        function updateBar(id, value) {
+            const el = document.getElementById(id);
+            el.style.width = value + '%';
+            if (value <= 30) el.className = 'score-bar-fill bg-safe';
+            else if (value <= 60) el.className = 'score-bar-fill bg-warn';
+            else el.className = 'score-bar-fill bg-danger';
+        }
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+        }
+
+        function escHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // ============================================================
+        // Health Check
+        // ============================================================
+        async function checkHealth() {
+            try {
+                const resp = await fetch('/api/health');
+                const data = await resp.json();
+                const statusEl = document.getElementById('llm-status');
+                if (data.llm_available) {
+                    statusEl.innerHTML = '<span class="status-dot bg-green-400 neon-green"></span><span class="text-white/90">LLM 已连接</span>';
+                } else {
+                    statusEl.innerHTML = '<span class="status-dot bg-yellow-400 neon-amber"></span><span class="text-white/90">规则引擎模式</span>';
+                }
+                const vtEl = document.getElementById('vt-status');
+                if (vtEl) {
+                    if (data.vt_enabled) {
+                        vtEl.innerHTML = '<span class="status-dot bg-green-400 neon-green"></span><span class="text-white/90">VT 已启用</span>';
+                    } else {
+                        vtEl.innerHTML = '<span class="status-dot bg-white/40"></span><span class="text-white/70">VT 未配置</span>';
+                    }
+                }
+            } catch (e) {
+                // ignore
+            }
+        }
+        checkHealth();
+    </script>
+</body>
+</html>

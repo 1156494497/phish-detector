@@ -1,0 +1,11 @@
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+extract-msg>=0.47.0
+python-whois>=0.8.0
+oletools>=0.26
+filetype>=1.2.0
+openai>=1.6.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+aiohttp>=3.9.0
